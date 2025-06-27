@@ -1,5 +1,4 @@
 import { api, APIError } from "encore.dev/api";
-import { secret } from "encore.dev/config";
 
 // Type definitions
 interface StoredMessage {
@@ -64,110 +63,77 @@ const conversationHistory = new Map<string, StoredMessage[]>(); // session_id ->
 const sessionTypes = new Map<string, "ai" | "human">(); // session_id -> type
 const aiSessions = new Set<string>(); // Track which sessions have AI
 
-// Gemini API configuration
-const geminiApiKey = secret("GEMINI_API_KEY");
+// Ollama API configuration (local)
+const OLLAMA_BASE_URL = "http://localhost:11434";
 
-// Generate AI response using Gemini API
+// Generate AI response using Ollama API
 async function generateAIResponse(
   sessionId: string,
   currentMessage: string,
 ): Promise<string> {
   try {
-    // Check if API key is available
-    const apiKey = geminiApiKey();
-    if (!apiKey) {
-      console.error("Gemini API key not found");
-      return "hey whats up";
-    }
-    console.log("Gemini API key loaded successfully");
-
     // Get full conversation history from persistent storage
     const allMessages = conversationHistory.get(sessionId) || [];
 
-    // Build conversation history for Gemini
-    const geminiHistory = allMessages.map((msg) => ({
-      role: msg.is_ai ? "model" : "user",
-      parts: [{ text: msg.message }],
-    }));
+    // Build conversation context for Ollama
+    let contextPrompt =
+      "You are a chill teenager texting a friend. Be super casual with teen slang and typos. Keep responses short 5-6 words max. No punctuation ever. Expand greetings like hey wassup or yo whats good. Never reveal youre AI. Just vibe naturally.\n\n";
 
-    // Add the current message
-    geminiHistory.push({
-      role: "user",
-      parts: [{ text: currentMessage }],
+    // Add conversation history
+    allMessages.forEach((msg) => {
+      if (msg.is_ai) {
+        contextPrompt += `Assistant: ${msg.message}\n`;
+      } else {
+        contextPrompt += `Human: ${msg.message}\n`;
+      }
     });
 
-    // Add system prompt as the first message
-    const systemPrompt = {
-      role: "user",
-      parts: [
-        {
-          text: "You are a chill teenager texting a friend. Be super casual with teen slang and typos. Keep responses short 5-6 words max. No punctuation ever. Expand greetings like hey wassup or yo whats good. Never reveal youre AI. Just vibe naturally.",
-        },
-      ],
-    };
+    // Add current message
+    contextPrompt += `Human: ${currentMessage}\nAssistant:`;
 
     console.log(
-      "Sending request to Gemini API with",
-      geminiHistory.length,
-      "messages",
+      "Sending request to Ollama with context length:",
+      contextPrompt.length,
     );
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contents: [systemPrompt, ...geminiHistory],
-          generationConfig: {
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-            maxOutputTokens: 300,
-          },
-        }),
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify({
+        model: "mistral:latest", // You can change this to any model you have installed
+        prompt: contextPrompt,
+        stream: false,
+        options: {
+          temperature: 0.7,
+          top_p: 0.9,
+          top_k: 40,
+          num_predict: 50, // Max tokens for response
+        },
+      }),
+    });
 
     if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status}`);
+      throw new Error(`Ollama API error: ${response.status}`);
     }
 
     const data = await response.json();
 
-    // Log the full response for debugging
-    console.log("Gemini API response:", JSON.stringify(data, null, 2));
+    // Log the response for debugging
+    console.log("Ollama API response:", JSON.stringify(data, null, 2));
 
-    // More robust error checking
-    if (
-      data.candidates &&
-      Array.isArray(data.candidates) &&
-      data.candidates.length > 0
-    ) {
-      const candidate = data.candidates[0];
-      if (
-        candidate &&
-        candidate.content &&
-        candidate.content.parts &&
-        Array.isArray(candidate.content.parts) &&
-        candidate.content.parts.length > 0
-      ) {
-        const part = candidate.content.parts[0];
-        if (part && part.text) {
-          return part.text.trim();
-        }
-      }
+    if (data.response && typeof data.response === "string") {
+      return data.response.trim();
     }
 
     // Log if we don't get expected format
-    console.log("Gemini API returned unexpected format, using fallback");
-    return "That's interesting! Tell me more.";
+    console.log("Ollama API returned unexpected format, using fallback");
+    return "yeah thats cool";
   } catch (error) {
-    console.error("Error calling Gemini API:", error);
+    console.error("Error calling Ollama API:", error);
     // Fallback response on error
-    return "I see what you mean. What are your thoughts on that?";
+    return "lol same";
   }
 }
 
