@@ -312,9 +312,38 @@ export const answer = api(
 
     const isCorrect = guess === sessionType;
 
-    return {
+    // Prepare response before cleanup
+    const response: AnswerResponse = {
       correct: isCorrect,
     };
+
+    // Clean up session after answer is submitted
+    const participants = sessions.get(sessionId) || [];
+    const updatedParticipants = participants.filter((id) => id !== user_id);
+
+    if (updatedParticipants.length === 0) {
+      // If no participants left, clean up the session
+      sessions.delete(sessionId);
+      sessionMessages.delete(sessionId);
+      conversationHistory.delete(sessionId);
+      sessionTypes.delete(sessionId);
+      aiSessions.delete(sessionId);
+    } else if (aiSessions.has(sessionId)) {
+      // For AI sessions, if the human user leaves, clean up everything
+      // (since AI participants aren't real users)
+      sessions.delete(sessionId);
+      sessionMessages.delete(sessionId);
+      conversationHistory.delete(sessionId);
+      sessionTypes.delete(sessionId);
+      aiSessions.delete(sessionId);
+    } else {
+      sessions.set(sessionId, updatedParticipants);
+    }
+
+    // Remove user from user-to-session mapping
+    userToSession.delete(user_id);
+
+    return response;
   },
 );
 
